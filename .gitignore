@@ -1,0 +1,7 @@
+/.venv
+/.vscode
+/.xmake
+/build
+/target
+env.fish
+env.sh
