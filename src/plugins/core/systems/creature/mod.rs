@@ -2,16 +2,18 @@ use bevy::log::info;
 use bevy::prelude::*;
 
 use crate::plugins::core::components::creature::{Human, Hunger, HungerRate, Name};
+use crate::plugins::core::resources::TimeScale;
 
 pub fn update_hunger(
     time: Res<Time>,
+    time_scale: Res<TimeScale>,
     mut query: Query<(&mut Hunger, &HungerRate, &Name), With<Human>>,
 ) {
     for (mut hunger, rate, name) in &mut query {
         if hunger.value == 0 {
             continue;
         }
-        hunger.accumulator += time.delta_secs();
+        hunger.accumulator += time.delta_secs() * time_scale.0 as f32;
         let interval = 60.0 / rate.0;
 
         while hunger.accumulator >= interval {
