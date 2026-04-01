@@ -1,18 +1,25 @@
+use bevy::log::info;
 use bevy::prelude::*;
 
 use crate::plugins::core::components::creature::{Human, Hunger, HungerRate, Name};
-use crate::plugins::core::resources::MyTimer;
 
 pub fn update_hunger(
     time: Res<Time>,
-    mut timer: ResMut<MyTimer>,
     mut query: Query<(&mut Hunger, &HungerRate, &Name), With<Human>>,
 ) {
-    if timer.0.tick(time.delta()).just_finished() {
-        for (mut hunger, rate, name) in &mut query {
-            hunger.0 = hunger.0.saturating_sub(rate.0 as u8);
-            println!("[{:?}]: {:?}", name, hunger.0);
+    for (mut hunger, rate, name) in &mut query {
+        if hunger.value == 0 {
+            continue;
         }
+        hunger.accumulator += time.delta_secs();
+        let interval = 60.0 / rate.0;
+
+        while hunger.accumulator >= interval {
+            hunger.accumulator -= interval;
+            hunger.value = hunger.value.saturating_sub(1);
+        }
+
+        info!("[{:?}]: {} {}", name, hunger.value, rate.0);
     }
 }
 
@@ -23,13 +30,14 @@ pub fn spawn_human() -> impl Bundle {
             real_name: "Ian".to_string(),
             nick_name: "Ian".to_string(),
         },
-        Hunger(100),
-        HungerRate(100),
+        Hunger {
+            value: 100,
+            accumulator: 0.0,
+        },
+        HungerRate(1.0),
     )
 }
 
 pub fn add_creature(mut commands: Commands) {
-    commands.spawn(spawn_human());
-    commands.spawn(spawn_human());
     commands.spawn(spawn_human());
 }

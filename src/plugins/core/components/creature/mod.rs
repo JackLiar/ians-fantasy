@@ -1,10 +1,13 @@
 use bevy::prelude::*;
 
 #[derive(Component)]
-pub struct Hunger(pub u8);
+pub struct Hunger {
+    pub value: u8,
+    pub accumulator: f32,
+}
 
 #[derive(Component)]
-pub struct HungerRate(pub u64);
+pub struct HungerRate(pub f32);
 
 #[derive(Component)]
 pub struct BodyTemperature(pub u8);
