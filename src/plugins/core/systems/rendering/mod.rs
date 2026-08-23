@@ -8,10 +8,14 @@ use crate::plugins::core::components::selection::Selectable;
 /// 场景对象的默认颜色。
 pub const OBJECT_COLOR: Color = Color::srgb(0.2, 0.5, 0.9);
 
-/// 搭建最简三维场景雏形：一个相机、一个方向光源、三个对象（立方体）。
+/// 地面平面的颜色。
+pub const GROUND_COLOR: Color = Color::srgb(0.55, 0.62, 0.5);
+
+/// 搭建最简三维场景雏形：一个相机、一个方向光源、一个可视化地面、
+/// 三个落在地面上的对象（立方体）。
 ///
-/// 成功标准：`cargo r` 后窗口中可以看到一排受光照的蓝色立方体，
-/// 按住右键（或触控板双指）拖拽可 360° 环绕查看，
+/// 成功标准：`cargo r` 后窗口中可以看到一排受光照的蓝色立方体
+/// 落在绿色地面上，按住右键（或触控板双指）拖拽可 360° 环绕查看，
 /// 左键拖拽可框选其中的若干对象。
 pub fn setup_scene(
     mut commands: Commands,
@@ -30,7 +34,20 @@ pub fn setup_scene(
         Transform::from_rotation(Quat::from_euler(EulerRot::ZYX, -1.0, -0.6, 0.0)),
     ));
 
-    // 三个对象：1x1x1 立方体沿 X 轴排开（底面贴 y=0），
+    // 可视化地面：一个很薄的立方体，顶面正好位于 y=0。
+    // 立方体底面（y=0）与其共面，视觉上"落在"地面上；
+    // 不挂 Selectable，不参与框选。
+    let ground = meshes.add(Cuboid::new(12.0, 0.1, 8.0));
+    commands.spawn((
+        Mesh3d(ground),
+        MeshMaterial3d(materials.add(StandardMaterial {
+            base_color: GROUND_COLOR,
+            ..default()
+        })),
+        Transform::from_xyz(0.0, -0.05, 0.0),
+    ));
+
+    // 三个对象：1x1x1 立方体沿 X 轴排开（底面贴 y=0，即落在地面上），
     // 各自独立材质实例，选中高亮互不影响。
     let cube = meshes.add(Cuboid::new(1.0, 1.0, 1.0));
     for x in [-2.0_f32, 0.0, 2.0] {
