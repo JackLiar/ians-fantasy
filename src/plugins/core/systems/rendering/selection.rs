@@ -19,9 +19,9 @@
 use bevy::prelude::*;
 use bevy::window::PrimaryWindow;
 
-use crate::plugins::core::components::selection::{Selected, Selectable};
-use super::orbit::{camera_screen_size, PanState};
 use super::OBJECT_COLOR;
+use super::orbit::{PanState, camera_screen_size};
+use crate::plugins::core::components::selection::{Selectable, Selected};
 
 /// 选中对象的高亮颜色。
 pub const SELECTION_COLOR: Color = Color::srgb(1.0, 0.85, 0.25);
@@ -71,7 +71,11 @@ pub fn selection_box_system(
     window: Single<&Window, With<PrimaryWindow>>,
     camera: Single<(&Transform, &Camera, &Projection), With<Camera>>,
     objects: Query<
-        (Entity, &Transform, Option<&MeshMaterial3d<StandardMaterial>>),
+        (
+            Entity,
+            &Transform,
+            Option<&MeshMaterial3d<StandardMaterial>>,
+        ),
         With<Selectable>,
     >,
     mut materials: ResMut<Assets<StandardMaterial>>,
@@ -133,9 +137,14 @@ pub fn selection_box_system(
     let changes: Vec<Change> = objects
         .iter()
         .map(|(entity, tf, mat)| {
-            let inside =
-                project_to_screen(tf.translation, cam_tf, persp.fov, persp.aspect_ratio, screen_size)
-                    .is_some_and(|p| (min.x..=max.x).contains(&p.x) && (min.y..=max.y).contains(&p.y));
+            let inside = project_to_screen(
+                tf.translation,
+                cam_tf,
+                persp.fov,
+                persp.aspect_ratio,
+                screen_size,
+            )
+            .is_some_and(|p| (min.x..=max.x).contains(&p.x) && (min.y..=max.y).contains(&p.y));
             Change {
                 entity,
                 inside,
@@ -173,8 +182,8 @@ pub fn selection_box_system(
 fn project_to_screen(
     world: Vec3,
     cam: &Transform,
-    fov: f32, // 垂直视场角（弧度）
-    aspect: f32, // 宽 / 高
+    fov: f32,          // 垂直视场角（弧度）
+    aspect: f32,       // 宽 / 高
     screen_size: Vec2, // 逻辑像素
 ) -> Option<Vec2> {
     let d = world - cam.translation;

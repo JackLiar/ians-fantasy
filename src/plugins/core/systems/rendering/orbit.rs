@@ -88,14 +88,12 @@ pub fn orbit_camera(
         (0.0, 0.0)
     };
 
-    apply_orbit_delta(&mut **camera, &settings, delta_pitch, delta_yaw);
+    apply_orbit_delta(&mut camera, &settings, delta_pitch, delta_yaw);
 
     // 物理鼠标滚轮缩放：向上滚近、向下滚远，限制在 2.0 ~ 50.0。
-    if matches!(mouse_scroll.unit, MouseScrollUnit::Line)
-        && mouse_scroll.delta.y != 0.0
-    {
-        settings.orbit_distance = (settings.orbit_distance * (1.0 + mouse_scroll.delta.y * 0.1))
-            .clamp(2.0, 50.0);
+    if matches!(mouse_scroll.unit, MouseScrollUnit::Line) && mouse_scroll.delta.y != 0.0 {
+        settings.orbit_distance =
+            (settings.orbit_distance * (1.0 + mouse_scroll.delta.y * 0.1)).clamp(2.0, 50.0);
     }
 
     // 保持相机始终指向环绕目标（平移会移动它）。
@@ -241,8 +239,7 @@ pub fn pan_camera(
     // 2) 拖动中：精确求解相机应平移的位移，使锚点始终位于光标正下方。
     if state.pressed_on_ground && mouse.pressed(MouseButton::Left) {
         if let (Some(anchor), Some(cursor)) = (state.anchor, window.cursor_position()) {
-            let (_, dir) =
-                cursor_ray(cursor, screen_size, cam_tf, persp.fov, persp.aspect_ratio);
+            let (_, dir) = cursor_ray(cursor, screen_size, cam_tf, persp.fov, persp.aspect_ratio);
             if dir.y < -1e-6 {
                 // 过光标的射线方向只取决于相机朝向；锚点在 y=0 上，
                 // 解出射线经过锚点的距离 t，相机（即环绕目标）应平移 delta。
@@ -268,7 +265,7 @@ fn cursor_ray(
     cursor: Vec2,
     screen_size: Vec2,
     cam_tf: &Transform,
-    fov: f32, // 垂直视场角（弧度）
+    fov: f32,    // 垂直视场角（弧度）
     aspect: f32, // 宽 / 高
 ) -> (Vec3, Vec3) {
     let ndc_x = cursor.x / screen_size.x * 2.0 - 1.0;
@@ -290,8 +287,9 @@ fn ray_hit_y0(origin: &Vec3, dir: &Vec3) -> Option<Vec3> {
 /// 相机视口的逻辑像素尺寸（主相机即整个窗口）。
 pub(crate) fn camera_screen_size(camera: &Camera, window: &Window) -> Vec2 {
     match &camera.viewport {
-        Some(vp) => Vec2::new(vp.physical_size.x as f32, vp.physical_size.y as f32)
-            / window.scale_factor(),
+        Some(vp) => {
+            Vec2::new(vp.physical_size.x as f32, vp.physical_size.y as f32) / window.scale_factor()
+        }
         // 0.19 的 `Window::size()` 直接返回逻辑像素。
         None => window.size(),
     }
@@ -345,9 +343,8 @@ pub fn auto_camera(
             fwd.normalize()
         };
         let right = Vec3::new(r.x, 0.0, r.z);
-        let delta = (fwd * move_dir.y + right * move_dir.x)
-            * (KB_PAN_SPEED * settings.orbit_distance)
-            * dt;
+        let delta =
+            (fwd * move_dir.y + right * move_dir.x) * (KB_PAN_SPEED * settings.orbit_distance) * dt;
         settings.target += delta;
     }
 
@@ -359,7 +356,7 @@ pub fn auto_camera(
     if keys.pressed(KeyCode::KeyE) {
         delta_yaw -= KB_YAW_SPEED * dt;
     }
-    apply_orbit_delta(&mut **camera, &settings, 0.0, delta_yaw);
+    apply_orbit_delta(&mut camera, &settings, 0.0, delta_yaw);
 
     // 3) 边缘 steering：光标贴近窗口边缘时向该边移动（无任何鼠标按键按下时）。
     let any_mouse = mouse.pressed(MouseButton::Left)
@@ -385,8 +382,11 @@ pub fn auto_camera(
                 let edge_dir = edge_dir.normalize();
                 // 深入边缘越深速度越快（线性渐增，贴边最浅处为 0）。
                 let depth = EDGE_MARGIN
-                    - (cursor.x.min(size.x - cursor.x).min(cursor.y.min(size.y - cursor.y)))
-                        .max(0.0);
+                    - (cursor
+                        .x
+                        .min(size.x - cursor.x)
+                        .min(cursor.y.min(size.y - cursor.y)))
+                    .max(0.0);
                 let ramp = (depth / EDGE_MARGIN).clamp(0.0, 1.0);
                 let f: Vec3 = camera.forward().into();
                 let r: Vec3 = camera.right().into();
@@ -465,13 +465,7 @@ fn apply_orbit_delta(
 /// 射线与 OBB（有向包围盒）求交，返回最近交点距离；无交返回 `None`。
 ///
 /// 盒体由中心、旋转与半尺寸描述（slab 法，在盒体局部坐标系求解）。
-fn ray_hit_obbox(
-    origin: &Vec3,
-    dir: &Vec3,
-    center: &Vec3,
-    rot: &Quat,
-    half: Vec3,
-) -> Option<f32> {
+fn ray_hit_obbox(origin: &Vec3, dir: &Vec3, center: &Vec3, rot: &Quat, half: Vec3) -> Option<f32> {
     let inv = rot.inverse();
     let local_origin = inv * (origin - center);
     let local_dir = inv * dir;
@@ -582,7 +576,13 @@ mod tests {
     fn ray_misses_box() {
         let origin = Vec3::new(5.0, 3.0, 5.0);
         let dir = Vec3::new(0.0, -1.0, 0.0);
-        let t = ray_hit_obbox(&origin, &dir, &Vec3::ZERO, &Quat::IDENTITY, Vec3::new(0.5, 0.5, 0.5));
+        let t = ray_hit_obbox(
+            &origin,
+            &dir,
+            &Vec3::ZERO,
+            &Quat::IDENTITY,
+            Vec3::new(0.5, 0.5, 0.5),
+        );
         assert!(t.is_none());
     }
 
