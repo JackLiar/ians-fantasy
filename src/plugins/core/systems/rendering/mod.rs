@@ -1,10 +1,18 @@
 pub mod orbit;
+pub mod selection;
 
 use bevy::prelude::*;
 
-/// 搭建最简三维场景雏形：一个相机、一个方向光源、一个对象（立方体）。
+use crate::plugins::core::components::selection::Selectable;
+
+/// 场景对象的默认颜色。
+pub const OBJECT_COLOR: Color = Color::srgb(0.2, 0.5, 0.9);
+
+/// 搭建最简三维场景雏形：一个相机、一个方向光源、三个对象（立方体）。
 ///
-/// 成功标准：`cargo r` 后窗口中可以看到原点处一个受光照的蓝色立方体。
+/// 成功标准：`cargo r` 后窗口中可以看到一排受光照的蓝色立方体，
+/// 按住右键（或触控板双指）拖拽可 360° 环绕查看，
+/// 左键拖拽可框选其中的若干对象。
 pub fn setup_scene(
     mut commands: Commands,
     mut meshes: ResMut<Assets<Mesh>>,
@@ -22,12 +30,18 @@ pub fn setup_scene(
         Transform::from_rotation(Quat::from_euler(EulerRot::ZYX, -1.0, -0.6, 0.0)),
     ));
 
-    // 三维空间中的唯一对象：一个 1x1x1 的蓝色立方体，位于原点。
-    commands.spawn((
-        Mesh3d(meshes.add(Cuboid::new(1.0, 1.0, 1.0))),
-        MeshMaterial3d(materials.add(StandardMaterial {
-            base_color: Color::srgb(0.2, 0.5, 0.9),
-            ..default()
-        })),
-    ));
+    // 三个对象：1x1x1 立方体沿 X 轴排开（底面贴 y=0），
+    // 各自独立材质实例，选中高亮互不影响。
+    let cube = meshes.add(Cuboid::new(1.0, 1.0, 1.0));
+    for x in [-2.0_f32, 0.0, 2.0] {
+        commands.spawn((
+            Selectable,
+            Mesh3d(cube.clone()),
+            MeshMaterial3d(materials.add(StandardMaterial {
+                base_color: OBJECT_COLOR,
+                ..default()
+            })),
+            Transform::from_xyz(x, 0.5, 0.0),
+        ));
+    }
 }
