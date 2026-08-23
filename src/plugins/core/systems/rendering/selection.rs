@@ -1,5 +1,8 @@
 //! 鼠标框选：左键拖拽在屏幕上画出矩形，松开后选中投影落入矩形内的对象。
 //!
+//! 与相机平移的分工：左键按在地面（y=0）上时，该手势归 `orbit::pan_camera`
+//! 所有（平移相机），框选让位；左键按在地面以外（天空区域）才启动框选。
+//!
 //! Bevy 0.19 要点（均已对照 registry 源码确认）：
 //! - UI 的 `Node` 组件用 `left/top/width/height: Val`（逻辑像素）定位，
 //!   布局系统 `ui_layout_system` 运行在 PostUpdate（Update 之后），
@@ -16,6 +19,7 @@ use bevy::prelude::*;
 use bevy::window::PrimaryWindow;
 
 use crate::plugins::core::components::selection::{Selected, Selectable};
+use super::orbit::{camera_screen_size, PanState};
 use super::OBJECT_COLOR;
 
 /// 选中对象的高亮颜色。
@@ -71,7 +75,13 @@ pub fn selection_box_system(
     >,
     mut materials: ResMut<Assets<StandardMaterial>>,
     mut commands: Commands,
+    pan: Res<PanState>,
 ) {
+    // 左键按在地面上属于相机平移（见 `orbit::pan_camera`），让位给平移。
+    if pan.pressing_on_ground() {
+        return;
+    }
+
     let window = &*window;
     let cursor = window.cursor_position(); // 逻辑像素
 
@@ -154,16 +164,6 @@ pub fn selection_box_system(
                 };
             }
         }
-    }
-}
-
-/// 相机视口的逻辑像素尺寸（主相机即整个窗口）。
-fn camera_screen_size(camera: &Camera, window: &Window) -> Vec2 {
-    match &camera.viewport {
-        Some(vp) => Vec2::new(vp.physical_size.x as f32, vp.physical_size.y as f32)
-            / window.scale_factor(),
-        // 0.19 的 `Window::size()` 直接返回逻辑像素。
-        None => window.size(),
     }
 }
 

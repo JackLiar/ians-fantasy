@@ -11,12 +11,18 @@ pub const OBJECT_COLOR: Color = Color::srgb(0.2, 0.5, 0.9);
 /// 地面平面的颜色。
 pub const GROUND_COLOR: Color = Color::srgb(0.55, 0.62, 0.5);
 
+/// 地面尺寸（x 向宽、z 向深），顶面位于 y=0。
+///
+/// 供 `setup_scene`（生成地面网格）与 `orbit::pan_camera`（判定左键是否
+/// 按在地面上）共用。
+pub const GROUND_SIZE: Vec2 = Vec2::new(12.0, 8.0);
+
 /// 搭建最简三维场景雏形：一个相机、一个方向光源、一个可视化地面、
 /// 三个落在地面上的对象（立方体）。
 ///
 /// 成功标准：`cargo r` 后窗口中可以看到一排受光照的蓝色立方体
 /// 落在绿色地面上，按住右键（或触控板双指）拖拽可 360° 环绕查看，
-/// 左键拖拽可框选其中的若干对象。
+/// 在地面上按住左键拖拽可平移相机，在天空区域左键拖拽可框选其中的若干对象。
 pub fn setup_scene(
     mut commands: Commands,
     mut meshes: ResMut<Assets<Mesh>>,
@@ -37,7 +43,7 @@ pub fn setup_scene(
     // 可视化地面：一个很薄的立方体，顶面正好位于 y=0。
     // 立方体底面（y=0）与其共面，视觉上"落在"地面上；
     // 不挂 Selectable，不参与框选。
-    let ground = meshes.add(Cuboid::new(12.0, 0.1, 8.0));
+    let ground = meshes.add(Cuboid::new(GROUND_SIZE.x, 0.1, GROUND_SIZE.y));
     commands.spawn((
         Mesh3d(ground),
         MeshMaterial3d(materials.add(StandardMaterial {

@@ -5,7 +5,7 @@ pub mod resources;
 pub mod systems;
 
 use systems::creature::{add_creature, update_hunger};
-use systems::rendering::orbit::{orbit_camera, OrbitCameraSettings};
+use systems::rendering::orbit::{orbit_camera, pan_camera, OrbitCameraSettings, PanState};
 use systems::rendering::selection::{
     selection_box_system, spawn_selection_box, SelectionState,
 };
@@ -19,6 +19,7 @@ impl Plugin for CorePlugin {
     fn build(&self, app: &mut App) {
         app.insert_resource(TimeScale(1))
             .init_resource::<OrbitCameraSettings>()
+            .init_resource::<PanState>()
             .init_resource::<SelectionState>()
             .add_systems(
                 Startup,
@@ -26,7 +27,9 @@ impl Plugin for CorePlugin {
             )
             .add_systems(
                 Update,
-                (update_hunger, orbit_camera, selection_box_system),
+                // 平移先读相机/目标并更新 target，环绕再据此摆放相机，
+                // 框选最后读取 PanState 对地面上的左键手势让位。
+                (update_hunger, (pan_camera, orbit_camera, selection_box_system).chain()),
             );
     }
 }
