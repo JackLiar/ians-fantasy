@@ -26,10 +26,11 @@ jobs:
           profile: minimal
 
       - name: Install Linux build dependencies
-        # pkg-config 已在 ubuntu runner 预装；提供 xmake 从源码构建原生依赖所需的构建工具
+        # pkg-config 已在 ubuntu runner 预装；meson/ninja 供 xmake 构建 wayland 使用；
+        # libudev 在 xmake 中是"系统包"（不编译源码，直接引用系统 libudev-dev），需手动安装
         run: |
           sudo apt-get update
-          sudo apt-get install -y meson ninja-build
+          sudo apt-get install -y meson ninja-build libudev-dev
 
       - name: Cache cargo registry
         uses: actions/cache@v3
@@ -112,13 +113,14 @@ jobs:
           profile: minimal
 
       # Linux 构建依赖（x86_64 与 aarch64 均为原生构建）
-      # pkg-config 已在 ubuntu runner 预装；alsa/udev/wayland 及其子依赖
-      # 由 xmake 从源码构建，这里提供 xmake 构建 wayland 所需的构建工具
+      # pkg-config 已在 ubuntu runner 预装；alsa/wayland 由 xmake 从源码构建；
+      # meson/ninja 供 xmake 构建 wayland 使用；libudev 在 xmake 中是"系统包"
+      # （不编译源码，直接引用系统 libudev-dev），需手动安装
       - name: Install Linux build dependencies
         if: runner.os == 'Linux'
         run: |
           sudo apt-get update
-          sudo apt-get install -y meson ninja-build
+          sudo apt-get install -y meson ninja-build libudev-dev
 
       # macOS 依赖
       - name: Install macOS dependencies
