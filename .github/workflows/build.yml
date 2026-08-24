@@ -1,0 +1,185 @@
+name: Build
+
+on:
+  push:
+    branches: [ main, master, develop ]
+  pull_request:
+    branches: [ main, master ]
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: 1
+
+jobs:
+  test:
+    name: Test
+    runs-on: ubuntu-latest
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Setup Rust
+      uses: actions-rs/toolchain@v1
+      with:
+        toolchain: stable
+        override: true
+        profile: minimal
+
+    - name: Install Linux build dependencies
+      # pkg-config 已在 ubuntu runner 预装；提供 xmake 从源码构建原生依赖所需的构建工具
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y meson ninja-build
+
+    - name: Cache cargo registry
+      uses: actions/cache@v3
+      with:
+        path: |
+          ~/.cargo/registry
+          ~/.cargo/git
+          target
+        key: ${{ runner.os }}-cargo-test-${{ hashFiles('**/Cargo.lock') }}
+        restore-keys: |
+          ${{ runner.os }}-cargo-test-
+          ${{ runner.os }}-cargo-
+
+    # 安装 xmake：构建原生 C 依赖（alsa/udev/wayland）并生成环境变量文件
+    - name: Setup xmake
+      uses: xmake-io/github-action-setup-xmake@v1
+      with:
+        xmake-version: latest
+        package-cache: true
+        package-cache-key: ${{ runner.os }}-${{ runner.arch }}
+        project-path: .
+
+    # 运行 xmake 构建原生依赖，生成 env.sh
+    - name: Build native dependencies (xmake)
+      run: |
+        xmake build
+
+    - name: Run tests
+      run: |
+        # 加载 xmake 生成的环境变量文件（若存在）
+        if [ -f env.sh ]; then source ./env.sh; fi
+        cargo test --release
+
+  build:
+    name: Build (${{ matrix.os }} - ${{ matrix.target }})
+    needs: test
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # Linux x86_64
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+            artifact_name: ians-fantasy
+            asset_name: ians-fantasy-linux-x86_64
+            use_xmake: true
+          # Linux aarch64 (原生构建：使用 ARM64 runner)
+          # 该 runner 本身是 aarch64，xmake 直接编译 aarch64 原生库，
+          # 无需交叉工具链；公开仓库免费可用 (ubuntu-24.04-arm)。
+          - os: ubuntu-24.04-arm
+            target: aarch64-unknown-linux-gnu
+            artifact_name: ians-fantasy
+            asset_name: ians-fantasy-linux-aarch64
+            use_xmake: true
+          # macOS ARM64 (Apple Silicon)
+          - os: macos-latest
+            target: aarch64-apple-darwin
+            artifact_name: ians-fantasy
+            asset_name: ians-fantasy-macos-arm64
+            use_xmake: true
+          # Windows x86_64
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+            artifact_name: ians-fantasy.exe
+            asset_name: ians-fantasy-windows-x86_64.exe
+            use_xmake: true
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Setup Rust
+      uses: actions-rs/toolchain@v1
+      with:
+        toolchain: stable
+        target: ${{ matrix.target }}
+        override: true
+        profile: minimal
+
+    # Linux 构建依赖（x86_64 与 aarch64 均为原生构建）
+    # pkg-config 已在 ubuntu runner 预装；alsa/udev/wayland 及其子依赖
+    # 由 xmake 从源码构建，这里提供 xmake 构建 wayland 所需的构建工具
+    - name: Install Linux build dependencies
+      if: runner.os == 'Linux'
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y meson ninja-build
+
+    # macOS 依赖
+    - name: Install macOS dependencies
+      if: runner.os == 'macOS'
+      run: |
+        brew install pkg-config openssl
+
+    # Windows 依赖（如果需要）
+    - name: Setup Windows dependencies
+      if: runner.os == 'Windows'
+      run: |
+        # 如果项目需要 OpenSSL，可以在这里安装
+        # choco install openssl
+        echo "Setting up Windows build environment"
+
+    # 安装 xmake：构建原生 C 依赖并生成对应的环境变量文件
+    - name: Setup xmake
+      if: matrix.use_xmake
+      uses: xmake-io/github-action-setup-xmake@v1
+      with:
+        xmake-version: latest
+        package-cache: true
+        package-cache-key: ${{ runner.os }}-${{ runner.arch }}
+        project-path: .
+
+    # 运行 xmake 构建原生依赖，生成对应的环境变量文件（env.sh / env.ps1）
+    - name: Build native dependencies (xmake)
+      if: matrix.use_xmake
+      run: |
+        xmake build
+
+    - name: Cache cargo registry
+      uses: actions/cache@v3
+      with:
+        path: |
+          ~/.cargo/registry
+          ~/.cargo/git
+          target
+        key: ${{ runner.os }}-${{ matrix.target }}-cargo-build-${{ hashFiles('**/Cargo.lock') }}
+        restore-keys: |
+          ${{ runner.os }}-${{ matrix.target }}-cargo-build-
+          ${{ runner.os }}-cargo-
+
+    # Linux / macOS：加载 env.sh 后再构建
+    - name: Build release (Linux/macOS)
+      if: runner.os != 'Windows'
+      run: |
+        # 加载 xmake 生成的环境变量文件（若存在）
+        if [ -f env.sh ]; then source ./env.sh; fi
+        cargo build --release --target ${{ matrix.target }}
+
+    # Windows：加载 env.ps1 后再构建
+    - name: Build release (Windows)
+      if: runner.os == 'Windows'
+      run: |
+        # 加载 xmake 生成的环境变量文件（若存在）
+        if (Test-Path .\env.ps1) { . .\env.ps1 }
+        cargo build --release --target ${{ matrix.target }}
+
+    - name: Upload artifact
+      uses: actions/upload-artifact@v4
+      with:
+        name: ${{ matrix.asset_name }}
+        path: target/${{ matrix.target }}/release/${{ matrix.artifact_name }}
+        if-no-files-found: error
