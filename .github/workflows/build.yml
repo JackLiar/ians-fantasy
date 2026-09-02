@@ -30,7 +30,7 @@ jobs:
         # libudev 在 xmake 中是"系统包"（不编译源码，直接引用系统 libudev-dev），需手动安装
         run: |
           sudo apt-get update
-          sudo apt-get install -y meson ninja-build libudev-dev
+          sudo apt-get install -y meson ninja-build libudev-dev libtool
 
       - name: Cache cargo registry
         uses: actions/cache@v3
@@ -120,7 +120,7 @@ jobs:
         if: runner.os == 'Linux'
         run: |
           sudo apt-get update
-          sudo apt-get install -y meson ninja-build libudev-dev
+          sudo apt-get install -y meson ninja-build libudev-dev libtool
 
       # macOS 依赖
       - name: Install macOS dependencies
