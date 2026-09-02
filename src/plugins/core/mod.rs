@@ -26,7 +26,7 @@ impl Plugin for CorePlugin {
             .add_systems(Startup, (add_creature, setup_scene, spawn_selection_box))
             .add_systems(
                 Update,
-                // 链内串行：平移/自动调整/键盘先更新 target 与相机，环绕再摆放相机，
+                // 链内串行：自动调整/键盘先更新 target 与相机，环绕再摆放相机，
                 // 聚焦过渡最后检测"是否被手动接管"，框选读取 PanState 让位。
                 (
                     update_hunger,

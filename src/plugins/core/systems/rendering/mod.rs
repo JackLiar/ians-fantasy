@@ -13,8 +13,7 @@ pub const GROUND_COLOR: Color = Color::srgb(0.55, 0.62, 0.5);
 
 /// 地面尺寸（x 向宽、z 向深），顶面位于 y=0。
 ///
-/// 供 `setup_scene`（生成地面网格）与 `orbit::pan_camera`（判定左键是否
-/// 按在地面上）共用。
+/// 供 `setup_scene` 生成地面网格使用。
 pub const GROUND_SIZE: Vec2 = Vec2::new(12.0, 8.0);
 
 /// `Selectable` 对象（1x1x1 立方体）的半尺寸，
@@ -26,7 +25,7 @@ pub const OBJECT_HALF_EXTENTS: Vec3 = Vec3::new(0.5, 0.5, 0.5);
 ///
 /// 成功标准：`cargo r` 后窗口中可以看到一排受光照的蓝色立方体
 /// 落在绿色地面上，按住右键（或触控板双指）拖拽可 360° 环绕查看，
-/// 在地面上按住左键拖拽可平移相机，在天空区域左键拖拽可框选其中的若干对象，
+/// 按住左键拖拽可框选其中的若干对象（按下点落在对象上时让位给双击聚焦），
 /// 双击立方体可让相机平滑聚焦到它，WASD/方向键移动相机、Q/E 旋转相机、
 /// 光标贴近窗口边缘时相机随之移动（详见 `orbit` 模块）。
 pub fn setup_scene(

@@ -21,7 +21,7 @@ pub struct OrbitCameraSettings {
     pub orbit_distance: f32,
     /// 环绕目标（相机始终注视的中心点）。
     ///
-    /// 默认为原点；在地面上左键拖动（平移，见 `pan_camera`）会移动它。
+    /// 默认为原点；WASD/方向键、Q/E 与屏幕边缘 steering（见 `auto_camera`）会移动它。
     pub target: Vec3,
     /// 俯仰速度（弧度 / 像素）。
     pub pitch_speed: f32,
@@ -56,9 +56,9 @@ impl Default for OrbitCameraSettings {
 /// 缩放：**物理鼠标滚轮**（`Line` 单位）→ 缩放距离。
 ///
 /// 本模块的其他相机输入：
-/// - 左键按住地面（y=0 平面）拖动 → 平移，`pan_camera`；
 /// - WASD/方向键移动、Q/E 旋转、光标贴近窗口边缘 → `auto_camera`；
-/// - 对象上双击左键 → 相机平滑聚焦到该对象，`focus_camera`。
+/// - 对象上双击左键 → 相机平滑聚焦到该对象，`focus_camera`；
+/// - 左键按住地面或天空拖动 → 框选（见 `selection::selection_box_system`）。
 ///
 /// 触控板普通双指滑动（未点击）不产生任何相机操作。
 pub fn orbit_camera(
@@ -101,16 +101,12 @@ pub fn orbit_camera(
     camera.translation = target - camera.forward() * settings.orbit_distance;
 }
 
-/// 左键按下分类（按下瞬间判定）与相机平移状态。
+/// 左键按下分类（按下瞬间判定）。
 ///
 /// 按下点命中 `Selectable` 对象 → 归对象所有（双击可聚焦相机）；
-/// 否则命中地面范围 → 归平移所有；两者都归位后，框选系统才启动。
+/// 其余（地面或天空）→ 归框选所有（见 `selection::selection_box_system`）。
 #[derive(Resource, Default)]
 pub struct PanState {
-    /// 左键当前按在地面上。
-    pressed_on_ground: bool,
-    /// 按下时光标下的地面点（y=0）；拖动期间它始终"粘"在光标下。
-    anchor: Option<Vec3>,
     /// 左键当前按在 `Selectable` 对象上。
     pressed_on_object: Option<Entity>,
     /// 上一次左键按下的时间（`Time::elapsed_secs`），用于双击检测。
@@ -120,11 +116,6 @@ pub struct PanState {
 }
 
 impl PanState {
-    /// 左键是否正按在地面上（框选系统据此让位）。
-    pub(crate) fn pressing_on_ground(&self) -> bool {
-        self.pressed_on_ground
-    }
-
     /// 左键是否正按在对象上（框选系统据此让位）。
     pub(crate) fn pressing_on_object(&self) -> bool {
         self.pressed_on_object.is_some()
@@ -133,7 +124,7 @@ impl PanState {
 
 /// 相机聚焦过渡：双击对象后，把环绕目标平滑移动到该对象处。
 ///
-/// 过渡期间用户手动移动相机（平移/键盘/边缘）会立即取消过渡——
+/// 过渡期间用户手动移动相机（键盘/边缘）会立即取消过渡——
 /// 通过对比"本系统上一帧写入的 target"与"当前 target"检测。
 #[derive(Resource, Default)]
 pub struct FocusTransition {
@@ -157,22 +148,17 @@ impl FocusTransition {
     }
 }
 
-/// 平移：左键按在地面上并拖动鼠标时，相机（环绕目标）随动移动，
-/// 按下时的地面点始终粘在光标下方，如同抓住地面拖动，1:1 跟手。
+/// 左键按下分类（按下瞬间判定）：判定按下点是否命中 `Selectable` 对象。
 ///
-/// 按下点分类（按下瞬间判定）：
-/// - 命中 `Selectable` 对象 → 归对象所有：不平移、不框选；
+/// - 命中 `Selectable` 对象 → 归对象所有：不框选；
 ///   若构成"双击"（两次按下间隔与距离都很短）则触发相机聚焦（见 `focus_camera`）；
-/// - 否则命中地面范围（y=0 顶面矩形，见 `super::GROUND_SIZE`）→ 归平移所有；
-/// - 否则（天空区域）→ 归框选所有。
-///
-/// 按住期间即使光标移出地面范围（射线仍指向 y=0 平面）也继续平移。
+/// - 其余（地面或天空）→ 归框选所有（见 `selection::selection_box_system`）。
 ///
 /// 必须运行在 `orbit_camera`（读 `target` 更新相机位置）与
 /// `selection_box_system`（读 `PanState` 决定是否跳过）之前。
 pub fn pan_camera(
     mut state: ResMut<PanState>,
-    mut settings: ResMut<OrbitCameraSettings>,
+    settings: Res<OrbitCameraSettings>,
     mut focus: ResMut<FocusTransition>,
     mouse: Res<ButtonInput<MouseButton>>,
     window: Single<&Window, With<PrimaryWindow>>,
@@ -186,10 +172,8 @@ pub fn pan_camera(
     };
     let screen_size = camera_screen_size(cam, &*window);
 
-    // 1) 左键按下：按下点分类（对象 > 地面 > 天空）。
+    // 1) 左键按下：按下点分类（对象 > 其余）。
     if mouse.just_pressed(MouseButton::Left) {
-        state.pressed_on_ground = false;
-        state.anchor = None;
         state.pressed_on_object = None;
         if let Some(cursor) = window.cursor_position() {
             let (origin, dir) =
@@ -222,13 +206,6 @@ pub fn pan_camera(
                 if double {
                     focus.begin(entity, settings.target);
                 }
-            } else if let Some(hit) = ray_hit_y0(&origin, &dir) {
-                let on_ground = hit.x.abs() <= super::GROUND_SIZE.x * 0.5
-                    && hit.z.abs() <= super::GROUND_SIZE.y * 0.5;
-                if on_ground {
-                    state.pressed_on_ground = true;
-                    state.anchor = Some(hit);
-                }
             }
             // 记录本次按下，供下一次双击检测。
             state.last_press_time = Some(time.elapsed_secs());
@@ -236,26 +213,8 @@ pub fn pan_camera(
         }
     }
 
-    // 2) 拖动中：精确求解相机应平移的位移，使锚点始终位于光标正下方。
-    if state.pressed_on_ground && mouse.pressed(MouseButton::Left) {
-        if let (Some(anchor), Some(cursor)) = (state.anchor, window.cursor_position()) {
-            let (_, dir) = cursor_ray(cursor, screen_size, cam_tf, persp.fov, persp.aspect_ratio);
-            if dir.y < -1e-6 {
-                // 过光标的射线方向只取决于相机朝向；锚点在 y=0 上，
-                // 解出射线经过锚点的距离 t，相机（即环绕目标）应平移 delta。
-                let t = -cam_tf.translation.y / dir.y;
-                let delta = anchor - cam_tf.translation - t * dir;
-                if delta.length_squared() > 1e-10 {
-                    settings.target += delta;
-                }
-            }
-        }
-    }
-
-    // 3) 松开：结束平移/对象按下。
+    // 2) 松开：清除对象按下状态。
     if !mouse.pressed(MouseButton::Left) {
-        state.pressed_on_ground = false;
-        state.anchor = None;
         state.pressed_on_object = None;
     }
 }
@@ -273,15 +232,6 @@ fn cursor_ray(
     let half_tan = (fov * 0.5).tan();
     let dir_local = Vec3::new(ndc_x * half_tan * aspect, ndc_y * half_tan, -1.0).normalize();
     (cam_tf.translation, cam_tf.rotation * dir_local)
-}
-
-/// 射线与 y=0 平面求交；射线与平面平行或指向上方时返回 `None`。
-fn ray_hit_y0(origin: &Vec3, dir: &Vec3) -> Option<Vec3> {
-    if dir.y >= -1e-6 {
-        return None;
-    }
-    let t = -origin.y / dir.y;
-    (t > 0.0).then(|| origin + dir * t)
 }
 
 /// 相机视口的逻辑像素尺寸（主相机即整个窗口）。
@@ -303,7 +253,7 @@ pub(crate) fn camera_screen_size(camera: &Camera, window: &Window) -> Vec2 {
 /// - **Q / E**：左转 / 右转相机（与鼠标环绕同向：Q 等价于持续向右拖鼠标）；
 /// - **边缘 steering**：光标贴近窗口边缘时，相机向该边方向持续移动
 ///   （看哪边就往哪边挪），速度随"深入边缘"的距离线性渐增。
-///   仅在没有任何鼠标按键按下时启用，避免与环绕/平移/框选手势冲突。
+///   仅在没有任何鼠标按键按下时启用，避免与环绕/框选手势冲突。
 ///
 /// 必须运行在 `orbit_camera` 之前（两者都写相机 Transform 与 target，链式串行）。
 pub fn auto_camera(

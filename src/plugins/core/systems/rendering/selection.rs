@@ -1,8 +1,8 @@
 //! 鼠标框选：左键拖拽在屏幕上画出矩形，松开后选中投影落入矩形内的对象。
 //!
 //! 与相机手势的分工（按下点分类，见 `orbit::pan_camera`）：左键按在
-//! `Selectable` 对象上归对象所有（双击可聚焦相机）、按在地面（y=0）上
-//! 归相机平移所有，框选都让位；只有按在天空区域才启动框选。
+//! `Selectable` 对象上归对象所有（双击可聚焦相机），框选对其让位；
+//! 其余（地面或天空）归框选所有。
 //!
 //! Bevy 0.19 要点（均已对照 registry 源码确认）：
 //! - UI 的 `Node` 组件用 `left/top/width/height: Val`（逻辑像素）定位，
@@ -82,9 +82,9 @@ pub fn selection_box_system(
     mut commands: Commands,
     pan: Res<PanState>,
 ) {
-    // 左键按在地面上属于相机平移、按在对象上属于双击聚焦（均见
-    // `orbit::pan_camera`），让位给它们。
-    if pan.pressing_on_ground() || pan.pressing_on_object() {
+    // 左键按在对象上属于双击聚焦（见 `orbit::pan_camera`），让位给它；
+    // 按在地面或天空均启动框选。
+    if pan.pressing_on_object() {
         return;
     }
 
