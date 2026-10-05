@@ -44,6 +44,18 @@ impl Default for OrbitCameraSettings {
     }
 }
 
+/// 相机锁定：把环绕目标"钉"在某个 `Selectable` 对象上。
+///
+/// 双击对象建立锁定（见 `pan_camera`），锁定期间 `auto_camera` 每帧把
+/// `OrbitCameraSettings::target` 贴到该对象的位置。按 WASD/方向键平移相机
+/// （即修改 target）视为用户接管，立即解除锁定；旋转（Q/E、鼠标环绕、
+/// 边缘环绕）与缩放不改变 target，因此不解除锁定。
+#[derive(Resource, Default)]
+pub struct CameraLock {
+    /// 被相机锁定的对象；`None` 表示未锁定。
+    pub target: Option<Entity>,
+}
+
 /// 每帧根据鼠标输入更新相机，使其绕原点（环绕目标）做 360° 环绕。
 ///
 /// 旋转必须"按住 + 移动"：
@@ -56,8 +68,10 @@ impl Default for OrbitCameraSettings {
 /// 缩放：**物理鼠标滚轮**（`Line` 单位）→ 缩放距离。
 ///
 /// 本模块的其他相机输入：
-/// - WASD/方向键移动、Q/E 旋转、光标贴近窗口边缘 → `auto_camera`；
-/// - 对象上双击左键 → 相机平滑聚焦到该对象，`focus_camera`；
+/// - WASD/方向键移动、Q/E 旋转、光标贴近窗口边缘（未锁定→平移、锁定→环绕）
+///   → `auto_camera`；
+/// - 对象上双击左键 → 相机平滑聚焦到该对象并锁定（`focus_camera` 过渡，
+///   之后由 `locked_camera_follow` 跟随）；
 /// - 左键按住地面或天空拖动 → 框选（见 `selection::selection_box_system`）。
 ///
 /// 触控板普通双指滑动（未点击）不产生任何相机操作。
@@ -146,12 +160,19 @@ impl FocusTransition {
         self.t = 0.0;
         self.last_applied = None;
     }
+
+    /// 是否正处于聚焦过渡中（此时 target 由本系统驱动，
+    /// `auto_camera` 的锁定跟随必须让位）。
+    pub(crate) fn is_transitioning(&self) -> bool {
+        self.goal_entity.is_some()
+    }
 }
 
 /// 左键按下分类（按下瞬间判定）：判定按下点是否命中 `Selectable` 对象。
 ///
 /// - 命中 `Selectable` 对象 → 归对象所有：不框选；
-///   若构成"双击"（两次按下间隔与距离都很短）则触发相机聚焦（见 `focus_camera`）；
+///   若构成"双击"（两次按下间隔与距离都很短）则触发相机聚焦并**锁定**该对象
+///   （见 `focus_camera` 与 `auto_camera`）；
 /// - 其余（地面或天空）→ 归框选所有（见 `selection::selection_box_system`）。
 ///
 /// 必须运行在 `orbit_camera`（读 `target` 更新相机位置）与
@@ -160,6 +181,7 @@ pub fn pan_camera(
     mut state: ResMut<PanState>,
     settings: Res<OrbitCameraSettings>,
     mut focus: ResMut<FocusTransition>,
+    mut lock: ResMut<CameraLock>,
     mouse: Res<ButtonInput<MouseButton>>,
     window: Single<&Window, With<PrimaryWindow>>,
     camera: Single<(&Transform, &Camera, &Projection), With<Camera>>,
@@ -204,6 +226,8 @@ pub fn pan_camera(
                     .is_some_and(|t0| now - t0 < DOUBLE_CLICK_INTERVAL)
                     && (cursor - state.last_press_pos).length() < DOUBLE_CLICK_DIST;
                 if double {
+                    // 聚焦 + 锁定：过渡结束后由 `locked_camera_follow` 持续跟随该对象。
+                    lock.target = Some(entity);
                     focus.begin(entity, settings.target);
                 }
             }
@@ -249,16 +273,24 @@ pub(crate) fn camera_screen_size(camera: &Camera, window: &Window) -> Vec2 {
 ///
 /// - **WASD / 方向键**：沿地面移动相机（前进 = 相机朝向投影到地面，
 ///   左右 = 相机 right 方向）；速度随环绕距离缩放，拉远镜头后
-///   同样按键速度覆盖更大地面范围，保持跟手感；
+///   同样按键速度覆盖更大地面范围，保持跟手感。
+///   平移会改变 `target`，因此按下时**解除锁定**（用户接管相机）；
 /// - **Q / E**：左转 / 右转相机（与鼠标环绕同向：Q 等价于持续向右拖鼠标）；
-/// - **边缘 steering**：光标贴近窗口边缘时，相机向该边方向持续移动
-///   （看哪边就往哪边挪），速度随"深入边缘"的距离线性渐增。
-///   仅在没有任何鼠标按键按下时启用，避免与环绕/框选手势冲突。
+/// - **边缘 steering**：光标贴近窗口边缘时持续转向（仅在没有任何鼠标按键
+///   按下时启用，避免与环绕/框选手势冲突），速度随"深入边缘"的距离线性渐增：
+///   - **未锁定**：相机向该边方向持续移动（看哪边就往哪边挪）；
+///   - **已锁定**：绕被锁定对象环绕——左右边缘水平旋转（yaw），
+///     上下边缘垂直旋转（pitch，上边缘镜头抬高俯视、下边缘降低到平视）。
+///
+/// 锁定跟随由独立的 `locked_camera_follow` 负责：本系统已持有可变的相机
+/// `Transform`，把"读被锁对象的 Transform"放在同一系统里会让两个查询对
+/// `Transform` 同时存在可变/只读访问，依赖 Bevy 只做过滤器互斥推断并不可靠。
 ///
 /// 必须运行在 `orbit_camera` 之前（两者都写相机 Transform 与 target，链式串行）。
 pub fn auto_camera(
     mut settings: ResMut<OrbitCameraSettings>,
     mut camera: Single<&mut Transform, With<Camera>>,
+    mut lock: ResMut<CameraLock>,
     keys: Res<ButtonInput<KeyCode>>,
     mouse: Res<ButtonInput<MouseButton>>,
     window: Single<&Window, With<PrimaryWindow>>,
@@ -266,7 +298,7 @@ pub fn auto_camera(
 ) {
     let dt = time.delta_secs();
 
-    // 1) WASD / 方向键：沿地面平移。
+    // 1) WASD / 方向键：沿地面平移；锁定时视为用户接管，先解除锁定。
     let mut move_dir = Vec2::ZERO;
     if keys.pressed(KeyCode::KeyW) || keys.pressed(KeyCode::ArrowUp) {
         move_dir.y += 1.0;
@@ -281,6 +313,7 @@ pub fn auto_camera(
         move_dir.x += 1.0;
     }
     if move_dir != Vec2::ZERO {
+        lock.target = None; // 平移相机 = 用户接管，解除锁定
         let move_dir = move_dir.normalize(); // 斜向与轴向速度一致
         // 相机前向/右向投影到地面（y=0）；俯视时前向投影趋近于零，
         // 退化为世界 -Z，避免归一化不稳定。
@@ -308,53 +341,107 @@ pub fn auto_camera(
     }
     apply_orbit_delta(&mut camera, &settings, 0.0, delta_yaw);
 
-    // 3) 边缘 steering：光标贴近窗口边缘时向该边移动（无任何鼠标按键按下时）。
+    // 3) 边缘 steering：光标贴近窗口边缘时持续转向（无任何鼠标按键按下时）。
     let any_mouse = mouse.pressed(MouseButton::Left)
         || mouse.pressed(MouseButton::Right)
         || mouse.pressed(MouseButton::Middle);
     if !any_mouse {
         if let Some(cursor) = window.cursor_position() {
             let size = window.size(); // 逻辑像素
-            let mut edge_dir = Vec2::ZERO;
-            if cursor.x < EDGE_MARGIN {
-                edge_dir.x -= 1.0; // 左边 → 向左
-            }
-            if size.x - cursor.x < EDGE_MARGIN {
-                edge_dir.x += 1.0; // 右边 → 向右
-            }
-            if cursor.y < EDGE_MARGIN {
-                edge_dir.y += 1.0; // 上边 → 向前（深入场景）
-            }
-            if size.y - cursor.y < EDGE_MARGIN {
-                edge_dir.y -= 1.0; // 下边 → 向后
-            }
-            if edge_dir != Vec2::ZERO {
-                let edge_dir = edge_dir.normalize();
-                // 深入边缘越深速度越快（线性渐增，贴边最浅处为 0）。
-                let depth = EDGE_MARGIN
-                    - (cursor
-                        .x
-                        .min(size.x - cursor.x)
-                        .min(cursor.y.min(size.y - cursor.y)))
-                    .max(0.0);
-                let ramp = (depth / EDGE_MARGIN).clamp(0.0, 1.0);
-                let f: Vec3 = camera.forward().into();
-                let r: Vec3 = camera.right().into();
-                let fwd = Vec3::new(f.x, 0.0, f.z);
-                let fwd = if fwd.length_squared() < 1e-8 {
-                    Vec3::new(0.0, 0.0, -1.0)
+            if let Some((edge_dir, ramp)) = edge_steering(cursor, size) {
+                if lock.target.is_some() {
+                    // 锁定：绕对象环绕（左右 → 水平，上下 → 垂直）。
+                    let (delta_pitch, delta_yaw) = edge_orbit_deltas(edge_dir, ramp, dt);
+                    apply_orbit_delta(&mut camera, &settings, delta_pitch, delta_yaw);
                 } else {
-                    fwd.normalize()
-                };
-                let right = Vec3::new(r.x, 0.0, r.z);
-                let delta = (fwd * edge_dir.y + right * edge_dir.x)
-                    * (KB_PAN_SPEED * settings.orbit_distance)
-                    * ramp
-                    * dt;
-                settings.target += delta;
+                    // 未锁定：相机向该边方向平移。
+                    let f: Vec3 = camera.forward().into();
+                    let r: Vec3 = camera.right().into();
+                    let fwd = Vec3::new(f.x, 0.0, f.z);
+                    let fwd = if fwd.length_squared() < 1e-8 {
+                        Vec3::new(0.0, 0.0, -1.0)
+                    } else {
+                        fwd.normalize()
+                    };
+                    let right = Vec3::new(r.x, 0.0, r.z);
+                    let delta = (fwd * edge_dir.y + right * edge_dir.x)
+                        * (KB_PAN_SPEED * settings.orbit_distance)
+                        * ramp
+                        * dt;
+                    settings.target += delta;
+                }
             }
         }
     }
+}
+
+/// 锁定跟随：把环绕目标贴到被锁定对象的位置（`CameraLock` 为空则无操作）。
+///
+/// - 聚焦过渡期间让位给 `focus_camera`（target 由过渡驱动），避免与它的
+///   "被手动接管"检测互相打架；
+/// - 被锁定实体不存在（despawn / 失去 `Selectable`）时解除锁定；
+/// - 必须运行在 `orbit_camera` **之前**（相机位置由 target 推导），
+///   否则跟随会滞后一帧。
+pub fn locked_camera_follow(
+    mut settings: ResMut<OrbitCameraSettings>,
+    mut lock: ResMut<CameraLock>,
+    focus: Res<FocusTransition>,
+    objects: Query<&Transform, With<Selectable>>,
+) {
+    let Some(entity) = lock.target else {
+        return;
+    };
+    if focus.is_transitioning() {
+        return;
+    }
+    match objects.get(entity) {
+        Ok(tf) => settings.target = tf.translation,
+        Err(_) => lock.target = None, // 对象已不存在 → 解除锁定
+    }
+}
+
+/// 边缘 steering：由光标位置计算 (已归一化方向, 0..1 强度)。
+///
+/// 方向约定：`x < 0` 左边缘、`x > 0` 右边缘；`y > 0` 上边缘、`y < 0` 下边缘。
+/// 强度随"深入边缘"的距离线性渐增，贴边最浅处为 0、压到边为 1；
+/// 光标不在任何边缘附近（含正中央）时返回 `None`。
+///
+/// 未锁定走平移、锁定走环绕，两条路径共用同一份方向/强度，保证手感一致。
+fn edge_steering(cursor: Vec2, size: Vec2) -> Option<(Vec2, f32)> {
+    let mut dir = Vec2::ZERO;
+    if cursor.x < EDGE_MARGIN {
+        dir.x -= 1.0; // 左边
+    }
+    if size.x - cursor.x < EDGE_MARGIN {
+        dir.x += 1.0; // 右边
+    }
+    if cursor.y < EDGE_MARGIN {
+        dir.y += 1.0; // 上边
+    }
+    if size.y - cursor.y < EDGE_MARGIN {
+        dir.y -= 1.0; // 下边
+    }
+    if dir == Vec2::ZERO {
+        return None;
+    }
+    let depth = EDGE_MARGIN
+        - (cursor
+            .x
+            .min(size.x - cursor.x)
+            .min(cursor.y.min(size.y - cursor.y)))
+        .max(0.0);
+    let ramp = (depth / EDGE_MARGIN).clamp(0.0, 1.0);
+    Some((dir.normalize(), ramp))
+}
+
+/// 锁定状态下的边缘环绕增量（返回值顺序为 `(delta_pitch, delta_yaw)`）。
+///
+/// - 左右边缘 → 水平环绕：光标贴哪边就往哪边绕；
+/// - 上边缘（`dir.y > 0`）→ pitch 减小 → 镜头抬高俯视；下边缘 → 降低到平视。
+fn edge_orbit_deltas(dir: Vec2, ramp: f32, dt: f32) -> (f32, f32) {
+    let delta_pitch = -dir.y * EDGE_ORBIT_PITCH_SPEED * ramp * dt;
+    let delta_yaw = dir.x * EDGE_ORBIT_YAW_SPEED * ramp * dt;
+    (delta_pitch, delta_yaw)
 }
 
 /// 应用相机聚焦过渡（必须运行在所有手动相机系统之后）：
@@ -458,6 +545,10 @@ const KB_PAN_SPEED: f32 = 1.0;
 const KB_YAW_SPEED: f32 = 2.0;
 /// 边缘 steering：光标距窗口边缘多近（逻辑像素）时开始生效。
 const EDGE_MARGIN: f32 = 10.0;
+/// 锁定后左右边缘的水平环绕速度（弧度/秒，乘边缘强度）。
+const EDGE_ORBIT_YAW_SPEED: f32 = 1.5;
+/// 锁定后上下边缘的垂直环绕速度（弧度/秒，乘边缘强度）。
+const EDGE_ORBIT_PITCH_SPEED: f32 = 1.2;
 /// 双击判定：两次按下的最大时间间隔（秒），与操作系统默认双击间隔一致。
 const DOUBLE_CLICK_INTERVAL: f32 = 0.5;
 /// 双击判定：两次按下位置的最大距离（逻辑像素）。
@@ -564,5 +655,83 @@ mod tests {
         )
         .expect("应命中");
         assert!((t - 0.0).abs() < 1e-6);
+    }
+
+    /// 左边缘 / 上边缘：方向指向该边，压到边上强度为 1。
+    #[test]
+    fn edge_steering_left_and_top() {
+        let size = Vec2::new(200.0, 200.0);
+
+        let (dir, ramp) = edge_steering(Vec2::new(0.0, 100.0), size).expect("左边缘应生效");
+        assert!((dir.x - (-1.0)).abs() < 1e-6, "dir = {:?}", dir);
+        assert!(dir.y.abs() < 1e-6, "dir = {:?}", dir);
+        assert!((ramp - 1.0).abs() < 1e-6, "ramp = {}", ramp);
+
+        let (dir, ramp) = edge_steering(Vec2::new(100.0, 0.0), size).expect("上边缘应生效");
+        assert!(dir.x.abs() < 1e-6, "dir = {:?}", dir);
+        assert!((dir.y - 1.0).abs() < 1e-6, "dir = {:?}", dir);
+        assert!((ramp - 1.0).abs() < 1e-6, "ramp = {}", ramp);
+    }
+
+    /// 正中央、或光标恰好落在 `EDGE_MARGIN` 上时不触发。
+    #[test]
+    fn edge_steering_none_away_from_edges() {
+        let size = Vec2::new(200.0, 200.0);
+        assert!(edge_steering(Vec2::new(100.0, 100.0), size).is_none());
+        // `cursor.x < EDGE_MARGIN` 严格小于，等于边界不触发。
+        assert!(edge_steering(Vec2::new(EDGE_MARGIN, 100.0), size).is_none());
+    }
+
+    /// 角落同时命中两轴：方向先归一化，避免斜向速度叠加。
+    #[test]
+    fn edge_steering_corner_normalized() {
+        let size = Vec2::new(200.0, 200.0);
+        let (dir, _) = edge_steering(Vec2::new(0.0, 0.0), size).expect("左上角应生效");
+        let inv_sqrt2 = 1.0 / 2.0_f32.sqrt();
+        assert!((dir.x - (-inv_sqrt2)).abs() < 1e-6, "dir = {:?}", dir);
+        assert!((dir.y - inv_sqrt2).abs() < 1e-6, "dir = {:?}", dir);
+        assert!((dir.length() - 1.0).abs() < 1e-6, "dir = {:?}", dir);
+    }
+
+    /// 强度随深入边缘的距离线性渐增。
+    #[test]
+    fn edge_steering_ramp_scales_with_depth() {
+        let size = Vec2::new(200.0, 200.0);
+        let (_, ramp) = edge_steering(Vec2::new(5.0, 100.0), size).expect("左边缘应生效");
+        assert!((ramp - 0.5).abs() < 1e-6, "ramp = {}", ramp);
+        let (_, ramp) = edge_steering(Vec2::new(9.0, 100.0), size).expect("左边缘应生效");
+        assert!((ramp - 0.1).abs() < 1e-6, "ramp = {}", ramp);
+    }
+
+    /// 锁定环绕方向约定：上边缘抬高俯视（pitch 减小）、下边缘降低到平视；
+    /// 右边缘向右绕（yaw 增大）、左边缘反向。
+    #[test]
+    fn edge_orbit_deltas_direction() {
+        // dt = 1、ramp = 1 时增量幅度即速度常量。
+        let (pitch_up, yaw_up) = edge_orbit_deltas(Vec2::new(0.0, 1.0), 1.0, 1.0);
+        assert!(
+            (pitch_up - (-EDGE_ORBIT_PITCH_SPEED)).abs() < 1e-6,
+            "{}",
+            pitch_up
+        );
+        assert!(yaw_up.abs() < 1e-6, "{}", yaw_up);
+
+        let (pitch_down, _) = edge_orbit_deltas(Vec2::new(0.0, -1.0), 1.0, 1.0);
+        assert!(pitch_down > 0.0, "{}", pitch_down);
+
+        let (pitch_right, yaw_right) = edge_orbit_deltas(Vec2::new(1.0, 0.0), 1.0, 1.0);
+        assert!(
+            (yaw_right - EDGE_ORBIT_YAW_SPEED).abs() < 1e-6,
+            "{}",
+            yaw_right
+        );
+        assert!(pitch_right.abs() < 1e-6, "{}", pitch_right);
+
+        let (_, yaw_left) = edge_orbit_deltas(Vec2::new(-1.0, 0.0), 1.0, 1.0);
+        assert!(yaw_left < 0.0, "{}", yaw_left);
+
+        // 强度为 0 时不产生任何旋转。
+        let (pitch_zero, yaw_zero) = edge_orbit_deltas(Vec2::new(1.0, 1.0), 0.0, 1.0);
+        assert_eq!((pitch_zero, yaw_zero), (0.0, 0.0));
     }
 }

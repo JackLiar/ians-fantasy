@@ -6,8 +6,8 @@ pub mod systems;
 
 use systems::creature::{add_creature, update_hunger};
 use systems::rendering::orbit::{
-    FocusTransition, OrbitCameraSettings, PanState, auto_camera, focus_camera, orbit_camera,
-    pan_camera,
+    CameraLock, FocusTransition, OrbitCameraSettings, PanState, auto_camera, focus_camera,
+    locked_camera_follow, orbit_camera, pan_camera,
 };
 use systems::rendering::selection::{SelectionState, selection_box_system, spawn_selection_box};
 use systems::rendering::setup_scene;
@@ -22,17 +22,19 @@ impl Plugin for CorePlugin {
             .init_resource::<OrbitCameraSettings>()
             .init_resource::<PanState>()
             .init_resource::<FocusTransition>()
+            .init_resource::<CameraLock>()
             .init_resource::<SelectionState>()
             .add_systems(Startup, (add_creature, setup_scene, spawn_selection_box))
             .add_systems(
                 Update,
-                // 链内串行：自动调整/键盘先更新 target 与相机，环绕再摆放相机，
-                // 聚焦过渡最后检测"是否被手动接管"，框选读取 PanState 让位。
+                // 链内串行：自动调整/键盘先更新 target 与相机，锁定跟随贴住被锁对象，
+                // 环绕再摆放相机，聚焦过渡最后检测"是否被手动接管"，框选读取 PanState 让位。
                 (
                     update_hunger,
                     (
                         pan_camera,
                         auto_camera,
+                        locked_camera_follow,
                         orbit_camera,
                         focus_camera,
                         selection_box_system,
